@@ -9,6 +9,7 @@ from astropy.time import Time
 from astropy import units as u
 from astropy.coordinates import AltAz
 
+
 # Set the default text font size
 plt.rc('font', size=16)
 # Set the axes title font size
@@ -22,7 +23,7 @@ plt.rc('ytick', labelsize=15)
 # Set the legend font size
 plt.rc('legend', fontsize=18)
 # Set the font size of the figure title
-plt.rc('figure', titlesize=30)
+plt.rc('figure', titlesize=25)
 
 def makeFiles():
     """
@@ -78,14 +79,16 @@ def fits(time):
     """
     Ns, sigNs = [], []
     if time == 'am':
+        ytext1 = 0.05
         nums = numbers[:6]  # gets the morning numbers
-        guess = (3.9e-18, .035, 1420.57, 3.5e-16)  # amplitude, sigma, mu, c
+        guess = (3.9e-18, .035, 1420.57, 3.5e-16, -4.04e-23)  # amplitude, sigma, mu, c
         PDT = np.array(['07:00:00', '07:20:00', '07:26:00',  # 38, 41, 43
                         '07:32:00', '07:38:00', '07:44:00'])  # 44, 45, 46
             
     elif time == 'pm':
+        ytext1 = 0.55
         nums = numbers[6:]  # gets the afternoon numbers
-        guess = (7e-18, .06, 1420.2263, 1.4e-16)  # amplitude, sigma, mu, c
+        guess = (7e-18, .06, 1420.2263, 1.4e-16, -5.81e-23)  # amplitude, sigma, mu, c
         PDT = np.array(['16:40:00', '16:54:00', '17:00:00',  # 48, 52, 53
                         '17:06:00', '17:11:00', '17:17:00',  # 54, 55, 56
                         '17:23:00', '17:29:00', '17:35:00'])
@@ -101,13 +104,12 @@ def fits(time):
             # plt.savefig('Data.pdf')
             plt.show()
 
-        x = 2 # factor to scale figures by
-        fig, ax = plt.subplots(2,1, figsize=(6.4*x,4.8*x), sharex=True)  # creates figures
+        x = 2  # factor to scale figures by
+        fig, ax = plt.subplots(2, 1, figsize=(6.4 * x, 4.8 * x), sharex=True)  # creates figures
 
         ax[0].plot(xdata, ydata)  # plots the data
         fig.text(0.5, 0.04, 'Frequency (MHz)', ha='center')
         # fig.text(0.04, 0.5, 'W / Hz', va='center', rotation='vertical')
-
 
         popt, pcov = curve_fit(gauss, xdata, ydata, p0=guess)  # fits a guassian
         print('Amp={}  sig={}  mu={}  c={}'.format(*popt))  # prints the best fit parameters
@@ -116,8 +118,9 @@ def fits(time):
         ax[0].axvline(1420.4, color='r')  # plots the expected frequency
         ax[0].set_title('Power vs. Wavelength')
         ax[0].set_ylabel('W / Hz')
+        ax[0].text(ytext1, 0.8, "Baseline = {:.2e} * x + {:.2e}".format(popt[-1], popt[-2]), transform=ax[0].transAxes)
 
-        sig_nums = 3  # number of sigmas to start counting background
+        sig_nums = 4  # number of sigmas to start counting background
         stop1 = popt[2] - sig_nums * popt[1]  # 3 sigma left
         start2 = popt[2] + sig_nums * popt[1]  # 3 sigma right
         index = find_closest_indices(xdata, [stop1, start2])  # get the index for those
@@ -133,8 +136,10 @@ def fits(time):
         ax[1].set_title('Residual')
         ax[1].set_ylabel('W / Hz')
         ax[1].text(1, 0.5, "Sum = \n{:.2e}".format(res_sum), transform=ax[1].transAxes)
+        ax[1].axvline(xdata[stop1], color='r')  # plots the expected frequency
+        ax[1].axvline(xdata[start2], color='r')  # plots the expected frequency
 
-        sub = ydata - popt[-1]  # subtract the background c, this is now dp/df
+        sub = ydata - popt[-2] - xdata * popt[-1]  # subtract the background c, this is now dp/df
         B, sigB, T, sigT = BT(sub, np.sqrt(np.abs(sub)))  # calculates B and T for each point
 
         ymaxloc = np.where(ydata == np.max(ydata))[0][0]  # get the index of max y
@@ -145,13 +150,16 @@ def fits(time):
         constants = 1.8224e18 * spacing
         N = constants * np.sum(T)  # Column Density im cm^-2
 
-        rms1 = RMS(residual1); Terr1 = BT(1,rms1)[-1]  # left side
-        rms2 = RMS(residual2); Terr2 = BT(1,rms2)[-1]  # right side
+        rms1 = RMS(residual1);
+        Terr1 = BT(1, rms1)[-1]  # left side
+        rms2 = RMS(residual2);
+        Terr2 = BT(1, rms2)[-1]  # right side
 
         length = len(residual1) + len(residual2)
-        sigN = np.sqrt(length * (Terr1**2 + Terr2**2)) * constants
+        sigN = np.sqrt(length * (Terr1 ** 2 + Terr2 ** 2)) * constants
 
-        Ns.append(N); sigNs.append(sigN)
+        Ns.append(N);
+        sigNs.append(sigN)
         print('N = {} +- {}'.format(N, sigN))
         print('-------------------------------------------')
         # plt.savefig('Gauss fit {}.pdf'.format(n))
@@ -205,6 +213,7 @@ def skymap():
     # plt.savefig('skymap.pdf')
     plt.show()
 
+
 def airyintegral():
     """
     From Oliver. Don't need to change anything. This is only dependent on the telescope and we only used one.
@@ -255,10 +264,10 @@ def find_closest_indices(xdata, target_values):
     return indices
 
 
-def gauss(x, amplitude, sig, mu, c):
+def gauss(x, amplitude, sig, mu, c, slope):
     a = 1 / (sig * np.sqrt(2*np.pi))
     b = -0.5 * ((x - mu) / sig) ** 2
-    return amplitude * (a * np.exp(b)) + c
+    return amplitude * (a * np.exp(b)) + slope * x + c
 
 
 def BT(dpdf, sigdpdf, useB=False):
@@ -317,6 +326,6 @@ if __name__ == "__main__":
     makeFiles()
     # RADEC('am')  # morning coordinates
     # RADEC('pm')  # evening Coordinates  # 45 deg w/ galactic plane can explain why it still goes up
-    # fits('am')  # morning plots
+    fits('am')  # morning plots
     # fits('pm')  # evening plots
-    skymap()
+    # skymap()
